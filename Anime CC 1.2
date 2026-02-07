@@ -24,8 +24,8 @@ local Window = Rayfield:CreateWindow({
 	LoadingTitle = "DurDom's Anime Card Collection",
 	LoadingSubtitle = "by itzayejay",
 	ShowText = "DurDom",
-	Theme = "Default",
-	ToggleUIKeybind = "K",
+	Theme = "Serenity",
+	ToggleUIKeybind = Enum.KeyCode.Insert,
 	ConfigurationSaving = {
 		Enabled = true,
 		FileName = "DurDomHub"
@@ -248,66 +248,75 @@ end)
 
 
 --========================================================
--- AUTO FARMING TAB (WORKING)
+-- AUTO FARMING & MUTATION FILTERS (FULL INTEGRATION)
 --========================================================
+
+-- Create Auto Farming Tab
 local AutoFarmTab = Window:CreateTab("Auto Farming", 4483362458)
 AutoFarmTab:CreateSection("Pack Automation")
+
+-- Create Mutation Filters Tab
+local MutationTab = Window:CreateTab("Mutation Filters", 4483362458)
+MutationTab:CreateSection("Allowed Mutations")
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-
 local player = Players.LocalPlayer
 local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
 
--- State
+--========================================================
+-- STATE VARIABLES
+--========================================================
 local autoFarmPacksEnabled = false
 local selectedPacks = {}
+local mutationFilters = {
+    Gold = false,
+    Emerald = false,
+    Void = false,
+    Diamond = false,
+    Rainbow = false
+}
 
 --========================================================
--- FIND PLAYER PLOT
+-- MUTATION FILTER TOGGLES
 --========================================================
-local function getPlayerPlot()
-	local plots = workspace:FindFirstChild("Plots")
-	if not plots then return nil end
-
-	for i = 1, 6 do
-		local plot = plots:FindFirstChild(tostring(i))
-		if plot then
-			local display =
-				plot:FindFirstChild("Map")
-				and plot.Map:FindFirstChild("Display")
-				and plot.Map.Display:FindFirstChild("Top")
-				and plot.Map.Display.Top:FindFirstChild("Gui")
-				and plot.Map.Display.Top.Gui:FindFirstChild("Display")
-				and plot.Map.Display.Top.Gui.Display:FindFirstChild("Display")
-
-			if display and typeof(display.Text) == "string" then
-				local textLower = string.lower(display.Text)
-				local playerLower = string.lower(player.Name)
-				if string.find(textLower, playerLower, 1, true) then
-					print("[AutoFarm] Detected player plot:", i, "Text:", display.Text)
-					return i
-				end
-			end
-		end
-	end
-
-	return nil
+for mutation, _ in pairs(mutationFilters) do
+    MutationTab:CreateToggle({
+        Name = mutation,
+        CurrentValue = false,
+        Flag = "Mutation_" .. mutation,
+        Callback = function(v)
+            mutationFilters[mutation] = v
+            print("[MutationTab] " .. mutation .. " set to", v)
+        end
+    })
 end
+
+-- Restore saved mutation flags
+task.delay(1, function()
+    for mutation, _ in pairs(mutationFilters) do
+        local flag = Rayfield.Flags["Mutation_" .. mutation]
+        if flag and flag.CurrentValue ~= nil then
+            mutationFilters[mutation] = flag.CurrentValue
+            print("[MutationTab] Restored", mutation, flag.CurrentValue)
+        end
+    end
+end)
 
 --========================================================
 -- AUTO FARM TOGGLE
 --========================================================
 AutoFarmTab:CreateToggle({
-	Name = "Auto Farm Packs",
-	CurrentValue = false,
-	Flag = "AutoFarmPacks",
-	Callback = function(v)
-		autoFarmPacksEnabled = v
-	end
+    Name = "Auto Farm Packs",
+    CurrentValue = false,
+    Flag = "AutoFarmPacks",
+    Callback = function(v)
+        autoFarmPacksEnabled = v
+    end
 })
 
+-- Restore auto farm toggle on load
 task.delay(1, function()
     local flag = Rayfield.Flags["AutoFarmPacks"]
     if flag and flag.CurrentValue ~= nil then
@@ -316,32 +325,32 @@ task.delay(1, function()
     end
 end)
 
-
 --========================================================
 -- PACK FILTER TOGGLES
 --========================================================
 local packsFolder =
-	ReplicatedStorage:FindFirstChild("Assets")
-	and ReplicatedStorage.Assets:FindFirstChild("Packs")
+    ReplicatedStorage:FindFirstChild("Assets")
+    and ReplicatedStorage.Assets:FindFirstChild("Packs")
 
 if packsFolder then
-	for _, pack in ipairs(packsFolder:GetChildren()) do
-		if pack:IsA("Model") then
-			selectedPacks[pack.Name] = false
+    for _, pack in ipairs(packsFolder:GetChildren()) do
+        if pack:IsA("Model") then
+            selectedPacks[pack.Name] = false
 
-AutoFarmTab:CreateToggle({
-    Name = pack.Name,
-    CurrentValue = false,
-    Flag = "Pack_" .. pack.Name,
-    Callback = function(v)
-        selectedPacks[pack.Name] = v
+            AutoFarmTab:CreateToggle({
+                Name = pack.Name,
+                CurrentValue = false,
+                Flag = "Pack_" .. pack.Name,
+                Callback = function(v)
+                    selectedPacks[pack.Name] = v
+                    print("[AutoFarm] Pack " .. pack.Name .. " set to", v)
+                end
+            })
+        end
     end
-})
-
-		end
-	end
 end
 
+-- Restore pack toggles
 task.delay(1, function()
     for packName, _ in pairs(selectedPacks) do
         local flag = Rayfield.Flags["Pack_" .. packName]
@@ -352,116 +361,114 @@ task.delay(1, function()
     end
 end)
 
-
 --========================================================
--- MUTATION CHECK
+-- MUTATION CHECK FUNCTION
 --========================================================
 local function mutationPasses(packModel)
-	-- No mutation filters → allow all
-	if not (_G.Gold or _G.Emerald or _G.Void or _G.Diamond or _G.Rainbow) then
-		return true
-	end
+    -- If no mutation toggles are ON → allow all
+    local anyEnabled = false
+    for _, enabled in pairs(mutationFilters) do
+        if enabled then
+            anyEnabled = true
+            break
+        end
+    end
+    if not anyEnabled then
+        return true
+    end
 
-	for mutationName, toggle in pairs({
-		Gold = _G.Gold,
-		Emerald = _G.Emerald,
-		Void = _G.Void,
-		Diamond = _G.Diamond,
-		Rainbow = _G.Rainbow
-	}) do
-		if toggle and packModel:FindFirstChild(mutationName) then
-			return true
-		end
-	end
+    -- Loop through all categories under the pack
+    for _, category in ipairs(packModel:GetChildren()) do
+        -- category is something like "Hunter"
+        for _, mutation in ipairs(category:GetChildren()) do
+            if mutationFilters[mutation.Name] then
+                return true -- allowed mutation found
+            end
+        end
+    end
 
-	return false
+    -- No allowed mutations found
+    return false
 end
 
 
+--========================================================
+-- FIND PLAYER PLOT
+--========================================================
+local function getPlayerPlot()
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+
+    for i = 1, 6 do
+        local plot = plots:FindFirstChild(tostring(i))
+        if plot then
+            local display =
+                plot:FindFirstChild("Map")
+                and plot.Map:FindFirstChild("Display")
+                and plot.Map.Display:FindFirstChild("Top")
+                and plot.Map.Display.Top:FindFirstChild("Gui")
+                and plot.Map.Display.Top.Gui:FindFirstChild("Display")
+                and plot.Map.Display.Top.Gui.Display:FindFirstChild("Display")
+
+            if display and typeof(display.Text) == "string" then
+                local textLower = string.lower(display.Text)
+                local playerLower = string.lower(player.Name)
+                if string.find(textLower, playerLower, 1, true) then
+                    print("[AutoFarm] Detected player plot:", i, "Text:", display.Text)
+                    return i
+                end
+            end
+        end
+    end
+
+    return nil
+end
 
 --========================================================
 -- AUTO FARM LOOP
 --========================================================
 task.spawn(function()
-	local cachedPlot = nil
+    local cachedPlot = nil
 
-	while task.wait(1) do
-		if not autoFarmPacksEnabled then
-			cachedPlot = nil
-			continue
-		end
+    while task.wait(1) do
+        if not autoFarmPacksEnabled then
+            cachedPlot = nil
+            continue
+        end
 
-		-- Detect plot ONCE
-		if not cachedPlot then
-			cachedPlot = getPlayerPlot()
-			if not cachedPlot then
-				warn("[AutoFarm] Plot not detected yet, retrying...")
-				continue
-			end
-		end
+        -- Detect plot ONCE
+        if not cachedPlot then
+            cachedPlot = getPlayerPlot()
+            if not cachedPlot then
+                warn("[AutoFarm] Plot not detected yet, retrying...")
+                continue
+            end
+        end
 
-		-- Loop through selected packs
-		for packName, isEnabled in pairs(selectedPacks) do
-			if not autoFarmPacksEnabled then break end
-			if isEnabled then
-				-- Find all packs in workspace.Client.Packs
-				for _, packModel in ipairs(workspace.Client.Packs:GetChildren()) do
-					-- Must belong to this plot
-					if packModel.Name:sub(-2) == "-" .. tostring(cachedPlot) then
-						-- Check pack toggle matches pack name
-						if packModel:FindFirstChild(packName) then
-							-- Check mutation filters
-							if mutationPasses(packModel) then
-								-- Fire remote to buy pack
-								CardRemote:FireServer("BuyPack", packModel.Name)
-								print("[AutoFarm] Bought pack:", packModel.Name)
-								task.wait(0.2) -- spacing to avoid spam/kick
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-end)
+        -- Loop through selected packs
+        for packName, isEnabled in pairs(selectedPacks) do
+            if not autoFarmPacksEnabled then break end
+            if not isEnabled then continue end
 
-
-
-
---========================================================
--- MUTATION FILTERS TAB
---========================================================
-local MutationTab = Window:CreateTab("Mutation Filters", 4483362458)
-MutationTab:CreateSection("Allowed Mutations")
-
-local mutationFilters = {
-	Gold = false,
-	Emerald = false,
-	Void = false,
-	Diamond = false,
-	Rainbow = false
-}
-
-for mutation, _ in pairs(mutationFilters) do
-	MutationTab:CreateToggle({
-		Name = mutation,
-		CurrentValue = false,
-		Flag = "Mutation_" .. mutation,
-		Callback = function(v)
-			mutationFilters[mutation] = v
-		end
-	})
-end
-
-task.delay(1, function()
-    for mutation, _ in pairs(mutationFilters) do
-        local flag = Rayfield.Flags["Mutation_" .. mutation]
-        if flag and flag.CurrentValue ~= nil then
-            mutationFilters[mutation] = flag.CurrentValue
-            print("[Mutation] Restored", mutation, flag.CurrentValue)
+            local packsInWorkspace = workspace:FindFirstChild("Client")
+                and workspace.Client:FindFirstChild("Packs")
+            if packsInWorkspace then
+                for _, packModel in ipairs(packsInWorkspace:GetChildren()) do
+                    -- Must belong to this plot
+                    if packModel.Name:sub(-2) == "-" .. tostring(cachedPlot) then
+                        -- Check pack toggle and mutation filter
+                        if packModel:FindFirstChild(packName) and mutationPasses(packModel) then
+                            CardRemote:FireServer("BuyPack", packModel.Name)
+                            print("[AutoFarm] Bought pack:", packModel.Name)
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
         end
     end
 end)
+
 
 --========================================================
 -- AUTO GRADING TAB (FIXED DROPDOWN CALLBACK)
@@ -493,7 +500,7 @@ local CharacterCategories = {
 	["Solo Leveling"] = {"Jinwoo","Chae In","Tank","Yoonho","Jong In","Tusk","Gunhee","Beru","Igris"},
 	["Attack on Titan"] = {"Eren","Sasha","Armin","Reiner","Annie","Hange","Mikasa","Levi","Historia"},
 	["Chainsaw Man"] = {"Denji","Kobeni","Himeno","Aki","Power","Galgali","Angel","Reze","Makima"},
-	["Haikyuu"] = {"Kageyama","Nishinoya","Aone","Kuroo","Bokuto","Miya Twins","Oikawa","Ushijima"},
+	["Haikyuu"] = {"Kageyama","Nishinoya","Aone","Kuroo","Bokuto","Miya Twins","Oikawa","Wakatoshi Ushijima"},
 	["Blue Lock"] = {"Isagi","Bachira","Chigiri","Kunigami","Nagi","Barou","Shidou","Rin","Sae"},
 	["Black Clover"] = {"Asta","Yuno","Noelle","Luck","William","Nacht","Mereoleona","Yami","Julius"},
 	["Tokyo Ghoul"] = {"Kaneki","Kirishima","Fueguchi","Tsukiyama","Arima","Amon","Rize","Eto","Arima"}
@@ -555,6 +562,112 @@ task.spawn(function()
 		GradeRemote:FireServer(unpack(args))
 	end
 end)
+
+
+--========================================================
+-- AUTO TRAITS TAB (NEW)
+--========================================================
+local AutoTraitsTab = Window:CreateTab("Auto Traits", 4483362458)
+AutoTraitsTab:CreateSection("Trait Rolling")
+
+-- Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TowerRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Tower")
+
+-- State
+local autoFarmTraitsEnabled = false
+local selectedTraitCharacter = nil
+local lastTraitSelection = nil
+
+-- Roll speed (~13 rolls/sec)
+local TRAIT_ROLL_DELAY = 0.075
+
+--========================================================
+-- AUTO FARM TRAITS TOGGLE
+--========================================================
+AutoTraitsTab:CreateToggle({
+	Name = "AutoFarm Traits",
+	CurrentValue = false,
+	Flag = "AutoFarmTraits",
+	Callback = function(v)
+		autoFarmTraitsEnabled = v
+		-- Restore last selected character when toggled on
+		if v and lastTraitSelection then
+			selectedTraitCharacter = lastTraitSelection
+		end
+	end
+})
+
+--========================================================
+-- ANIME → CHARACTER LISTS (ORDER PRESERVED)
+--========================================================
+local TraitCategories = {
+	["One Piece"] = {"Luffy","Nami","Chopper","Usopp","Nico Robin","Franky","Jimbei","Sanji","Zoro"},
+	["Naruto"] = {"Naruto","Sakura","Shikamaru","Hinato","Rock Lee","Gaara","Sasuke","Kakashi","Minato"},
+	["Bleach"] = {"Ichigo","Kon","Orihime","Chad","Ury","Rukia","Renji","Kenpachi","Urahara"},
+	["Demon Slayer"] = {"Tanjiro","Nezuko","Inosuke","Zenitsu","Rengoku","Mitsuri","Giyu","Obanai","Sanemi"},
+	["Jujutsu Kaisen"] = {"Itadori","Nobara","Megumi","Toge","Maki","Todo","Yuta","Gojo","Sukuna"},
+	["Dragon Ball"] = {"Goku","Vegeta","Krillin","Piccolo","Trunks","Gohan","Super Saiyan Rose","Broly","Beerus"},
+	["Fire Force"] = {"Shinra","Iris","Tamaki","Obi","Hibana","Arthur","Sho","Benimaru"},
+	["One Punch Man"] = {"Saitama","King","Fubuki","Sonic","Child Emperor","Genos","Bang","Kamikaze","Tatsumaki"},
+	["Hunter x Hunter"] = {"Gon","Leorio","Shizuku","Kurapike","Kite","Killua","Hisoka","Neferpitou","Netero"},
+	["Solo Leveling"] = {"Jinwoo","Chae In","Tank","Yoonho","Jong In","Tusk","Gunhee","Beru","Igris"},
+	["Attack on Titan"] = {"Eren","Sasha","Armin","Reiner","Annie","Hange","Mikasa","Levi","Historia"},
+	["Chainsaw Man"] = {"Denji","Kobeni","Himeno","Aki","Power","Galgali","Angel","Reze","Makima"},
+	["Haikyuu"] = {"Kageyama","Nishinoya","Aone","Kuroo","Bokuto","Miya Twins","Oikawa","Wakatosh Ushijima"},
+	["Blue Lock"] = {"Isagi","Bachira","Chigiri","Kunigami","Nagi","Barou","Shidou","Rin","Sae"},
+	["Black Clover"] = {"Asta","Yuno","Noelle","Luck","William","Nacht","Mereoleona","Yami","Julius"},
+	["Tokyo Ghoul"] = {"Kaneki","Kirishima","Fueguchi","Tsukiyama","Arima","Amon","Rize","Eto","Arima"}
+}
+
+-- Explicit display order
+local TraitCategoryOrder = {
+	"One Piece","Naruto","Bleach","Demon Slayer","Jujutsu Kaisen",
+	"Dragon Ball","Fire Force","One Punch Man","Hunter x Hunter",
+	"Solo Leveling","Attack on Titan","Chainsaw Man","Haikyuu",
+	"Blue Lock","Black Clover","Tokyo Ghoul"
+}
+
+--========================================================
+-- DROPDOWNS (MOST RECENT SELECTION WINS)
+--========================================================
+for _, categoryName in ipairs(TraitCategoryOrder) do
+	local characterList = TraitCategories[categoryName]
+	if not characterList then continue end
+
+	AutoTraitsTab:CreateDropdown({
+		Name = categoryName,
+		Options = characterList,
+		CurrentOption = nil,
+		Flag = "Trait_" .. categoryName,
+		Callback = function(option)
+			-- Rayfield sometimes returns table
+			if typeof(option) == "table" then
+				selectedTraitCharacter = option[1]
+			else
+				selectedTraitCharacter = option
+			end
+
+			lastTraitSelection = selectedTraitCharacter
+			print("[Traits] Selected:", selectedTraitCharacter)
+		end
+	})
+end
+
+--========================================================
+-- AUTO TRAIT ROLL LOOP (FAST)
+--========================================================
+task.spawn(function()
+	while task.wait(TRAIT_ROLL_DELAY) do
+		if not autoFarmTraitsEnabled then continue end
+		if not selectedTraitCharacter then continue end
+		if typeof(selectedTraitCharacter) ~= "string" then continue end
+
+		TowerRemote:FireServer("Roll", selectedTraitCharacter)
+	end
+end)
+
+
 
 --========================================================
 -- MISC TAB
@@ -865,6 +978,17 @@ task.spawn(function()
 	end
 end)
 
+local towerRemote = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Tower")
+
+-- Start Tower Button
+MiscTab:CreateButton({
+	Name = "Start Tower",
+	Callback = function()
+		pcall(function()
+			towerRemote:FireServer("StartTower")
+		end)
+	end
+})
 
 --========================================================
 -- STREAMSAVER TAB
@@ -905,3 +1029,4 @@ StreamSaverTab:CreateButton({
 	end
 })
 ]]
+
